@@ -301,6 +301,9 @@ static std::string ReadFileWide(const std::string& path) {
 	return out;
 }
 
+// 确保给定完整文件路径的父目录存在（前向声明）
+static bool EnsureParentDir(const std::string& filePath);
+
 // 宽字符打开，以 UTF-8 方式追加一行（日志中文内容不会被破坏）
 static bool AppendLineWide(const std::string& path, const std::string& line) {
 	EnsureParentDir(path);
