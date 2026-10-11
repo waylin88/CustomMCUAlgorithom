@@ -4,6 +4,7 @@
 #include<cstring>
 #include<ctime>
 #include<fstream>
+#include<iostream>
 #include<string>
 
 STRUCOPERATOR OprateResult;  //芯片烧录操作结果
