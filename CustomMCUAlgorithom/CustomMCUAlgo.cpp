@@ -237,6 +237,30 @@ static std::string ReadLogPath() {
 	return lp.empty() ? std::string("error_log.txt") : lp;
 }
 
+// 确保给定完整文件路径的父目录存在；不存在则逐级创建。成功返回 true。
+static bool EnsureParentDir(const std::string& filePath) {
+	// 取最后一个 '/' 或 '\\' 之前的目录部分
+	size_t pos = filePath.find_last_of("/\\");
+	if (pos == std::string::npos) return true;  // 无目录，直接当前目录
+	std::string dir = filePath.substr(0, pos);
+	if (dir.empty()) return true;
+
+	// 逐级创建
+	std::string cur;
+	for (size_t i = 0; i <= dir.size(); ++i) {
+		if (i == dir.size() || dir[i] == '/' || dir[i] == '\\') {
+			if (!cur.empty()) {
+				CreateDirectoryA(cur.c_str(), nullptr);  // 已存在时返回 0，忽略
+			}
+			if (i < dir.size()) cur += dir[i];
+		}
+		else {
+			cur += dir[i];
+		}
+	}
+	return true;
+}
+
 // 追加一行烧录日志。格式：
 //   序号;MAC去冒号;序列号;TP-Link_xxxx;TP-Link_xxxx_5G
 // 其中 MAC 后4位取最后两字节组成，用于 wifi 名。
@@ -275,7 +299,13 @@ static void AppendLog(const unsigned char* mac) {
 	sprintf_s(wifi, sizeof(wifi), "TP-Link_%s", last4);
 	sprintf_s(wifi5g, sizeof(wifi5g), "TP-Link_%s_5G", last4);
 
-	std::ofstream ofs(logPath, std::ios::app);
+	std::ofstream ofs;
+	// 若路径含目录且级别不存在，ofstream 无法自行创建父目录，先确保父目录存在再打开
+	if (!EnsureParentDir(logPath)) {
+		std::cerr << "Cannot create dir for log: " << logPath << std::endl;
+		return;
+	}
+	ofs.open(logPath, std::ios::app);
 	if (ofs.is_open()) {
 		ofs << seq << ";"
 			<< macHex << ";"
