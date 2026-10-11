@@ -1,9 +1,0 @@
-{
-    "mcu":"@",
-    "data":[      
-        {
-            "startLocation":"0x00",
-            "file":"test.txt"
-        }
-    ]
-}
