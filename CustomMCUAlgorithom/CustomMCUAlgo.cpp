@@ -271,6 +271,46 @@ static std::string ReadLogPath() {
 	return lp.empty() ? std::string("error_log.txt") : lp;
 }
 
+// 将路径字节串转成 Windows 宽字符。配置内容可能是 UTF-8 或本地 ANSI(GBK)，
+// 这里先按 UTF-8 严格解码，失败则按本地 ANSI，从而兼容两种编码的中文路径。
+static std::wstring PathToWide(const std::string& s) {
+	std::wstring w;
+	int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.c_str(), (int)s.size(), nullptr, 0);
+	if (n > 0) {
+		w.resize(n);
+		MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.c_str(), (int)s.size(), &w[0], n);
+		return w;
+	}
+	n = MultiByteToWideChar(CP_ACP, 0, s.c_str(), (int)s.size(), nullptr, 0);
+	if (n > 0) {
+		w.resize(n);
+		MultiByteToWideChar(CP_ACP, 0, s.c_str(), (int)s.size(), &w[0], n);
+	}
+	return w;
+}
+
+// 宽字符打开读文件全文
+static std::string ReadFileWide(const std::string& path) {
+	FILE* f = _wfopen(PathToWide(path).c_str(), L"rb");
+	if (!f) return std::string();
+	std::string out;
+	char buf[4096];
+	size_t r;
+	while ((r = fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, r);
+	fclose(f);
+	return out;
+}
+
+// 宽字符打开，以 UTF-8 方式追加一行（日志中文内容不会被破坏）
+static bool AppendLineWide(const std::string& path, const std::string& line) {
+	EnsureParentDir(path);
+	FILE* f = _wfopen(PathToWide(path).c_str(), L"ab");
+	if (!f) return false;
+	fwrite(line.c_str(), 1, line.size(), f);
+	fclose(f);
+	return true;
+}
+
 // 确保给定完整文件路径的父目录存在；不存在则逐级创建。成功返回 true。
 static bool EnsureParentDir(const std::string& filePath) {
 	// 取最后一个 '/' 或 '\\' 之前的目录部分
@@ -284,7 +324,7 @@ static bool EnsureParentDir(const std::string& filePath) {
 	for (size_t i = 0; i <= dir.size(); ++i) {
 		if (i == dir.size() || dir[i] == '/' || dir[i] == '\\') {
 			if (!cur.empty()) {
-				CreateDirectoryA(cur.c_str(), nullptr);  // 已存在时返回 0，忽略
+				CreateDirectoryW(PathToWide(cur).c_str(), nullptr);  // 已存在时返回 0，忽略
 			}
 			if (i < dir.size()) cur += dir[i];
 		}
@@ -304,12 +344,13 @@ static void AppendLog(const unsigned char* mac) {
 	// 序号 = 已有行数 + 1（第一次为 1）
 	int seq = 1;
 	{
-		std::ifstream lf(logPath);
-		if (lf.is_open()) {
-			std::string line;
-			while (std::getline(lf, line)) {
-				if (!line.empty()) ++seq;
-			}
+		std::string lc = ReadFileWide(logPath);
+		size_t pos = 0;
+		while (pos < lc.size()) {
+			size_t nl = lc.find('\n', pos);
+			if (nl == std::string::npos) { ++seq; break; }
+			if (nl > pos) ++seq;
+			pos = nl + 1;
 		}
 	}
 
@@ -333,22 +374,11 @@ static void AppendLog(const unsigned char* mac) {
 	sprintf_s(wifi, sizeof(wifi), "TP-Link_%s", last4);
 	sprintf_s(wifi5g, sizeof(wifi5g), "TP-Link_%s_5G", last4);
 
-	std::ofstream ofs;
-	// 若路径含目录且级别不存在，ofstream 无法自行创建父目录，先确保父目录存在再打开
-	if (!EnsureParentDir(logPath)) {
-		std::cerr << "Cannot create dir for log: " << logPath << std::endl;
-		return;
-	}
-	ofs.open(logPath, std::ios::app);
-	if (ofs.is_open()) {
-		ofs << seq << ";"
-			<< macHex << ";"
-			<< serial << ";"
-			<< wifi << ";"
-			<< wifi5g << "\n";
-		ofs.close();
-	}
-	else {
+	char line[256];
+	sprintf_s(line, sizeof(line), "%d;%s;%s;%s;%s\n",
+		seq, macHex, serial, wifi, wifi5g);
+	// 追加一行（自动创建父目录，支持中文路径）
+	if (!AppendLineWide(logPath, line)) {
 		std::cerr << "Cannot open log: " << logPath << std::endl;
 	}
 }
