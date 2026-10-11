@@ -6,6 +6,7 @@
 #include<fstream>
 #include<iostream>
 #include<string>
+#include<vector>
 
 STRUCOPERATOR OprateResult;  //芯片烧录操作结果
 
@@ -148,6 +149,45 @@ static UINT ReadMacOffset() {
 	return (UINT)off;
 }
 
+// 读取 5620GEN.json 中记录的 firmware 路径；失败返回空串
+static std::string ReadFirmwarePath() {
+	std::string path = GetCfgPath();
+	std::ifstream ifs(path);
+	if (!ifs.is_open()) return "";
+	std::string content((std::istreambuf_iterator<char>(ifs)),
+		std::istreambuf_iterator<char>());
+	ifs.close();
+	return GetJsonValue(content, "firmware");
+}
+
+// 将 firmware 路径指定的源固件文件整体加载到 pCode 缓冲区。
+// 成功返回 true；失败返回 false（调用方回退使用上位机传入的数据）。
+static bool LoadFirmware(unsigned char* pCode, size_t maxSize, size_t& loadedSize) {
+	std::string fw = ReadFirmwarePath();
+	if (fw.empty()) return false;
+
+	std::ifstream f(fw, std::ios::binary);
+	if (!f.is_open()) {
+		std::cerr << "Cannot open firmware: " << fw << std::endl;
+		return false;
+	}
+	// 获取文件大小
+	f.seekg(0, std::ios::end);
+	std::streamoff size = f.tellg();
+	f.seekg(0, std::ios::beg);
+	if (size <= 0) {
+		f.close();
+		return false;
+	}
+	// 若文件超过缓冲区上限则截断读取最大可容纳部分
+	size_t toRead = (size_t)size;
+	if (toRead > maxSize) toRead = maxSize;
+	f.read((char*)pCode, (std::streamsize)toRead);
+	loadedSize = (size_t)f.gcount();
+	f.close();
+	return loadedSize > 0;
+}
+
 // 将新 MAC 写回 5620GEN.json（保留 firmware/mac_offset/mac_prefix，仅更新 last_mac）
 static void WriteLastMac(const unsigned char* mac) {
 	std::string path = GetCfgPath();
@@ -226,6 +266,12 @@ GETSERIAL_API pSTRUCOPERATOR GetSerial(unsigned char* pCode, unsigned char* pEEd
 {
 	// 主 MAC 注入地址：读取自 5620GEN.json 的 mac_offset，默认 0x7DF100
 	const UINT macAddr = ReadMacOffset();
+
+	// 从 5620GEN.json 的 firmware 路径加载源固件到 pCode 缓冲区。
+	// 这里假定 pCode 缓冲区足够容纳固件文件；加载成功后会用文件内容覆盖原始数据。
+	size_t loadedSize = 0;
+	LoadFirmware(pCode, ~(size_t)0, loadedSize);
+	(void)loadedSize;  // 仅作加载状态占位，后续若需按固件尺寸调整上报区域可在此使用
 
 	// 解析当前序列号（若无效则从 0 开始）——这部分保留原有序列号逻辑，不与 MAC 冲突
 	int SerialNumber = atoi(pSerial);
