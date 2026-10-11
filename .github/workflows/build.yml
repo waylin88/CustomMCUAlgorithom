@@ -20,21 +20,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 用 vcpkg 安装 rapidjson（纯头文件依赖，ConfigReader.cpp 使用）
-      - name: Install rapidjson via vcpkg
-        run: |
-          vcpkg install rapidjson:x86-windows
-          vcpkg install rapidjson:x64-windows
-
-      # 解析 vcpkg include 目录到环境变量
+      # 解析 vcpkg include 目录到环境变量（保留预留，工程暂不需要额外库）
       - name: Resolve vcpkg include path
         shell: bash
         run: |
           echo "VCPKG_INCLUDE=$VCPKG_INSTALLATION_ROOT/installed/x86-windows/include" >> "$GITHUB_ENV"
 
-      # 编译 Release-x86 (Win32)，覆盖硬编码的本机库路径，改用 vcpkg include。
-      # 直接使用 windows-2022 预装 VS2022 Enterprise 的 MSBuild 完整路径，
-      # 通过 VsDevCmd.bat 初始化编译环境（包含 cl.exe / include / lib）。
+      # 编译 Release-x86 (Win32)。
+      # 使用 windows-2022 预装 VS2022 的 MSBuild，通过 VsDevCmd.bat 初始化编译环境。
+      # 输出 DLL 名由工程 TargetName 决定：5620GEN.dll
       - name: Build (Release x86)
         shell: cmd
         run: |
@@ -46,19 +40,17 @@ jobs:
         shell: bash
         run: |
           mkdir -p artifacts
-          if [ -f "CustomMCUAlgorithom/Release/CustomMCUAlgorithom.dll" ]; then
-            cp -f "CustomMCUAlgorithom/Release/CustomMCUAlgorithom.dll" artifacts/
-          elif [ -f "Release/CustomMCUAlgorithom.dll" ]; then
-            cp -f "Release/CustomMCUAlgorithom.dll" artifacts/
-          fi
-          [ -f config.json ] && cp -f config.json artifacts/
-          [ -f test.txt ] && cp -f test.txt artifacts/
+          found=
+          for p in "CustomMCUAlgorithom/Release/5620GEN.dll" "Release/5620GEN.dll" "CustomMCUAlgorithom/Release/CustomMCUAlgorithom.dll"; do
+            if [ -f "$p" ]; then cp -f "$p" artifacts/5620GEN.dll; found=1; fi
+          done
+          [ -z "$found" ] && echo "!! DLL not found" || echo "DLL found"
           ls -la artifacts/
 
       # 上传产物到运行结果页，供下载
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: CustomMCUAlgorithom-Release
+          name: 5620GEN-Release
           path: artifacts/
           if-no-files-found: warn

@@ -18,16 +18,10 @@
     <ClInclude Include="CustomMCUAlgo.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="ConfigReader.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CustomMCUAlgo.cpp">
       <Filter>头文件</Filter>
-    </ClCompile>
-    <ClCompile Include="ConfigReader.cpp">
-      <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

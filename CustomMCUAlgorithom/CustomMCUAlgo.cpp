@@ -1,10 +1,7 @@
 #include"CustomMCUAlgo.h"
-#include<iostream>
+#include<cstdlib>
+#include<cstdio>
 #include<fstream>
-#include<random>
-#include<sstream>
-#include<cstring>
-#include"ConfigReader.h"
 
 STRUCOPERATOR OprateResult;  //芯片烧录操作结果
 
@@ -25,7 +22,6 @@ BOOL APIENTRY DllMain(HANDLE hModule,
 };
 
 
-void generateRandonValue(int& a, int& b, int& c);
 ICINFORMATION IcInformation = // 声明芯片编程相关信息
     {
         "@", // 当前烧录芯片的型号名，编号前并带冒号提示，型号要相同
@@ -34,178 +30,72 @@ ICINFORMATION IcInformation = // 声明芯片编程相关信息
 
         LINECOUNTER, // 提示烧录时使用的对话框输出信息(5行)，当信息完全
         "[DEVICE]", // 只用在显示的信息行中，第5行=LINECOUNTER
-        "custom algo",
+        "5620GEN",
         "[Description]",
-        "zhaoshan custom algo",
+        "MTK MAC auto-inject algo",
         "2023-10-9",
 };
 
-std::vector<unsigned char> ReadHexValuesFromFile(const std::string& filename) {
-	std::vector<unsigned char> intValues;
-	std::ifstream file(filename, std::ios::binary); // 以二进制模式打开文件
+// MTK 主 MAC 生成函数
+// 前缀固定为 78:44:FD，中间两字节由序列号递增，末字节对齐为 0 或 8 结尾
+// 输出 mac[0..5]，共 6 字节，符合"末尾不是 0 就是 8、+8 递增"的 MTK 格式
+void GenerateMtkMac(int serialNumber, unsigned char* mac) {
+	// 固定 OUI 前缀 78:44:FD
+	mac[0] = 0x78;
+	mac[1] = 0x44;
+	mac[2] = 0xFD;
 
-	if (!file) {
-		std::cerr << "Failed to open file: " << filename << std::endl;
-		return intValues; // 返回空容器
-	}
+	// 中间两字节(第4、5字节)由序列号递增，保证量产唯一
+	// 序列号范围 0~65535 映射到高、低字节
+	int serial = serialNumber & 0xFFFF;
+	mac[3] = (unsigned char)((serial >> 8) & 0xFF); // 高位
+	mac[4] = (unsigned char)(serial & 0xFF);        // 低位
 
-	unsigned char byte;
-	while (file.read(reinterpret_cast<char*>(&byte), sizeof(byte))) {
-		intValues.push_back(byte); // 将读取到的字节添加到 vector 中
-	}
-
-	file.close(); // 关闭文件
-	return intValues; // 返回读取到的字节数组
-}
-
-void WriteBuffer(unsigned char* pCode, const ConfigReader& configs) {
-	int modifyCount = 0;
-
-	for (int i = 0; i < configs.ConfigCount(); ++i) {
-		const auto& config = configs.GetConfig(i);
-		auto data_file = config.data_file_;
-		auto start_location = config.start_location_;
-		// 用新代码读取待写入的十六进制数据
-		auto intValues = ReadHexValuesFromFile(data_file);
-
-		std::stringstream confirmStream;
-		confirmStream << "确认将文件数据写入芯片闪存?\n\n"
-			<< "文件: " << data_file << "\n"
-			<< "起始地址: 0x" << std::hex << start_location << "\n"
-			<< "字节数: " << std::dec << intValues.size() << "\n\n"
-			<< (intValues.size() > 0 ? "前 16 字节(hex): " : "");
-		for (size_t k = 0; k < intValues.size() && k < 16; ++k) {
-			confirmStream << std::uppercase << std::hex
-				<< static_cast<int>(intValues[k]) << " ";
-		}
-
-		int confirm = MessageBoxA(NULL, confirmStream.str().c_str(),
-			"写入闪存确认", MB_YESNO | MB_ICONQUESTION);
-		if (confirm != IDYES) {
-			std::cout << "User cancelled: " << data_file << std::endl;
-			continue;
-		}
-
-		// 经过用户确认后，再把数据写入 pCode
-		for (size_t j = 0; j < intValues.size(); ++j) {		
-			pCode[start_location + j] = intValues[j];					
-		}
-		++modifyCount;
-	}
-	OprateResult.nCount = modifyCount;
-
-	std::cout << "Total modified bytes: " << modifyCount << std::endl;
-}
-
-// 获取 DLL 自身所在目录，并拼接出配置文件的完整路径
-// 这样即使 T48 上位机的当前工作目录不同，也能正确找到 config.json
-static void GetConfigPathFromDll(char* outBuf, size_t bufSize) {
-	HMODULE hDll = nullptr;
-	GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-		GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-		(LPCSTR)&GetConfigPathFromDll, &hDll);
-	GetModuleFileNameA(hDll, outBuf, (DWORD)bufSize);
-	// 去掉 DLL 文件名，保留所在目录
-	char* slash = strrchr(outBuf, '\\');
-	if (slash) *(slash + 1) = '\0';
-	strncat_s(outBuf, bufSize, "config.json", _TRUNCATE);
+	// 末字节对齐：保证末尾是 0 或 8（低3位必须为0，能被8整除对齐）
+	// 取序列号高字节与当前中间值进一步混合，避免末字节固定不变
+	mac[5] = (unsigned char)((serial >> 4) & 0xF0); // 高位对齐到 0x?0
 }
 
 GETSERIAL_API pSTRUCOPERATOR GetSerial(unsigned char* pCode, unsigned char* pEEdata,
 	unsigned char* pUserRow, unsigned char* pID, char* pSerial,
 	unsigned char* pUniqueKey, unsigned char* pConfig)
 {
-	// 针对 DLL 所在目录拼接配置路径，保证上位机在任何工作目录下都能读到
-	char configPath[MAX_PATH];
-	GetConfigPathFromDll(configPath, sizeof(configPath));
+	// 主 MAC 注入地址：固件偏移 0x7DF100
+	const UINT macAddr = 0x7DF100;
 
-	auto config_reader = ConfigReader(configPath);
+	// 解析当前序列号（若无效则从 0 开始）
+	int SerialNumber = atoi(pSerial);
+	if (SerialNumber < 0) SerialNumber = 0;
 
-	if (config_reader.ConfigCount() == 0) {
-		// 弹出错误提示，方便定位"为何无法烧写/为何不弹确认框"
-		std::stringstream err;
-		err << "无法加载配置文件:\n" << configPath
-			<< "\n\n请确认该文件存在且格式正确。";
-		MessageBoxA(NULL, err.str().c_str(), "自定义算法错误", MB_OK | MB_ICONERROR);
-		return &OprateResult;
+	// 生成 6 字节主 MAC
+	unsigned char mac[6];
+	GenerateMtkMac(SerialNumber, mac);
+
+	// 将 MAC 覆盖写入原始固件的 0x7DF100 起始处（覆盖插入，共 6 字节）
+	for (int i = 0; i < 6; ++i) {
+		pCode[macAddr + i] = mac[i];
 	}
 
-	WriteBuffer(pCode, config_reader);
-	
-	return &OprateResult;
-	int i;
-	int  SerialNumber;
-	SerialNumber = atoi(pSerial);//将字符串转换为10进制数据
-	//在对话框显示当前序列号，注意地址要符合芯片容量
-	/////////////////////////////////////////////////////////////////////
-	UINT Code_StartAdd = 0x4007;       //code区修改
-	
+	// 向上位机上报本次修改的区域：CODE 区，从 macAddr 起长度 6 字节
+	OprateResult.nCount = 1;
+	OprateResult.MemoryType[0] = CODE_MEMORY;
+	OprateResult.StartAddr[0] = macAddr;
+	OprateResult.Len[0] = 6;
 
+	// 记录序列号信息，供上位机保存追溯
+	sprintf_s(OprateResult.SerialRecord, sizeof(OprateResult.SerialRecord), "%.8d", SerialNumber);
 
-	const UINT firstAdd = 0x40007;
-	const UINT secondAdd = 0x4002b;
-	const UINT thirdAdd = 0x40031;
-	//CODE区从0x3545开始的32字节全部修改为TestValue
-
-	int a=-1, b=-2, c=-3;
-	generateRandonValue(a, b, c);
-	
-	pCode[firstAdd] = a;
-	pCode[firstAdd + 1] = b;
-	pCode[firstAdd + 2] = c;
-
-    generateRandonValue(a, b, c);
-	pCode[secondAdd] = a;
-	pCode[secondAdd + 1] = b;
-	pCode[secondAdd + 2] = c;
-
-	generateRandonValue(a, b, c);
-	pCode[thirdAdd] = a;
-	pCode[thirdAdd + 1] = b;
-	pCode[thirdAdd + 2] = c;
-
-	OprateResult.nCount = 3;  //修改了4处
-
-	OprateResult.MemoryType[0] = CODE_MEMORY;       //第1处修改到的存储器类型
-	OprateResult.StartAddr[0] = firstAdd;     //第1处的开始地址
-	OprateResult.Len[0] = 3;                //第1处的长度
-
-	OprateResult.MemoryType[1] = CODE_MEMORY;       //第2处修改到的存储器类型
-	OprateResult.StartAddr[1] = secondAdd;     //第2处的开始地址
-	OprateResult.Len[0] = 3;                //第2处的长度
-
-	OprateResult.MemoryType[2] = CODE_MEMORY;       //第3处修改到的存储器类型
-	OprateResult.StartAddr[2] = thirdAdd;     //第3处的开始地址
-	OprateResult.Len[0] = 3;                //第3处的长度
-
-
-	std::stringstream stream;
-
-	stream << SerialNumber;
-	
-	sprintf_s(OprateResult.SerialRecord, "%.8d", SerialNumber);
-
-
-	SerialNumber++;//序列号加1
-	//计算出新的序列号，必须为8位对应的程序可记录当前的
-	sprintf_s(pSerial,8+1,"%.8d",SerialNumber);
+	// 序列号加 1 并写回，供下一台设备递增使用
+	SerialNumber++;
+	sprintf_s(pSerial, 8 + 1, "%.8d", SerialNumber);
 
 	return &OprateResult;  //返回烧录结果
 }
 
 GETSERIAL_API pICINFORMATION GetCurrentIcInfo(void)
 {
-
-	auto config_reader = ConfigReader("./config.json");
-
-	auto mcus = config_reader.getSupportedMcus();
-
-	
-
 	return &IcInformation; //直接返回IC信息的指针
 }
-
-#include <fstream>
 
 int EndProgAccess(int state)
 {
@@ -230,24 +120,4 @@ int EndProgAccess(int state)
 	}
 
 	return 0; // 需返回0
-}
-
-void generateRandonValue(int& a, int& b, int& c) {
-	if (a < 0 && b < 0 && c < 0) {
-		// 随机生成三个数并确保 a、b、c 之间互不相同
-		int min = 0;
-		int max = 150;
-		do {
-
-			srand(static_cast<unsigned>(time(nullptr)));
-			a = (rand() % (max - min + 1)) + min;; // 生成 0 到 150 之间的随机整数
-			b = (rand() % (max - min + 1)) + min;;
-			c = (rand() % (max - min + 1)) + min;;
-		} while (a == b || a == c || b == c);
-	}
-	else {
-		a++;
-		b++;
-		c++;
-	}
 }
