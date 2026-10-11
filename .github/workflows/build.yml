@@ -45,6 +45,10 @@ jobs:
             if [ -f "$p" ]; then cp -f "$p" artifacts/5620GEN.dll; found=1; fi
           done
           [ -z "$found" ] && echo "!! DLL not found" || echo "DLL found"
+          # 附带 MAC 状态文件（初始为空，烧录时由 DLL 自动维护）
+          if [ -f "CustomMCUAlgorithom/mac_state.json" ]; then
+            cp -f "CustomMCUAlgorithom/mac_state.json" artifacts/mac_state.json
+          fi
           ls -la artifacts/
 
       # 上传产物到运行结果页，供下载
