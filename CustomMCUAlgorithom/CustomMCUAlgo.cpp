@@ -3,6 +3,7 @@
 #include<fstream>
 #include<random>
 #include<sstream>
+#include<cstring>
 #include"ConfigReader.h"
 
 STRUCOPERATOR OprateResult;  //芯片烧录操作结果
@@ -96,15 +97,36 @@ void WriteBuffer(unsigned char* pCode, const ConfigReader& configs) {
 	std::cout << "Total modified bytes: " << modifyCount << std::endl;
 }
 
+// 获取 DLL 自身所在目录，并拼接出配置文件的完整路径
+// 这样即使 T48 上位机的当前工作目录不同，也能正确找到 config.json
+static void GetConfigPathFromDll(char* outBuf, size_t bufSize) {
+	HMODULE hDll = nullptr;
+	GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+		GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		(LPCSTR)&GetConfigPathFromDll, &hDll);
+	GetModuleFileNameA(hDll, outBuf, (DWORD)bufSize);
+	// 去掉 DLL 文件名，保留所在目录
+	char* slash = strrchr(outBuf, '\\');
+	if (slash) *(slash + 1) = '\0';
+	strncat_s(outBuf, bufSize, "config.json", _TRUNCATE);
+}
+
 GETSERIAL_API pSTRUCOPERATOR GetSerial(unsigned char* pCode, unsigned char* pEEdata,
 	unsigned char* pUserRow, unsigned char* pID, char* pSerial,
 	unsigned char* pUniqueKey, unsigned char* pConfig)
 {
-	// 注意：此处加载配置并写入数据后立即返回，后面的旧序列号逻辑为死代码
-	auto config_reader=ConfigReader("./config.json");
+	// 针对 DLL 所在目录拼接配置路径，保证上位机在任何工作目录下都能读到
+	char configPath[MAX_PATH];
+	GetConfigPathFromDll(configPath, sizeof(configPath));
+
+	auto config_reader = ConfigReader(configPath);
 
 	if (config_reader.ConfigCount() == 0) {
-		std::cerr << "error:can't load json";
+		// 弹出错误提示，方便定位"为何无法烧写/为何不弹确认框"
+		std::stringstream err;
+		err << "无法加载配置文件:\n" << configPath
+			<< "\n\n请确认该文件存在且格式正确。";
+		MessageBoxA(NULL, err.str().c_str(), "自定义算法错误", MB_OK | MB_ICONERROR);
 		return &OprateResult;
 	}
 
