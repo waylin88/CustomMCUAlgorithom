@@ -2,5 +2,6 @@
   "firmware": "",
   "mac_offset": "0x7DF100",
   "mac_prefix": "78:44:FD",
-  "last_mac": ""
+  "last_mac": "",
+  "log_file": "D:/Xgpro/5620GEN.log"
 }

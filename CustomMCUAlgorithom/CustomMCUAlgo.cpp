@@ -188,14 +188,14 @@ static bool LoadFirmware(unsigned char* pCode, size_t maxSize, size_t& loadedSiz
 	return loadedSize > 0;
 }
 
-// 将新 MAC 写回 5620GEN.json（保留 firmware/mac_offset/mac_prefix，仅更新 last_mac）
+// 将新 MAC 写回 5620GEN.json（保留 firmware/mac_offset/mac_prefix/log_file，仅更新 last_mac）
 static void WriteLastMac(const unsigned char* mac) {
 	std::string path = GetCfgPath();
 	char macStr[32];
 	MacToHexString(mac, macStr);
 
 	// 读取原文件内容，若存在则保留其它字段
-	std::string firmware, off, pre;
+	std::string firmware, off, pre, logf;
 	std::ifstream ifs(path);
 	if (ifs.is_open()) {
 		std::string content((std::istreambuf_iterator<char>(ifs)),
@@ -204,6 +204,7 @@ static void WriteLastMac(const unsigned char* mac) {
 		firmware = GetJsonValue(content, "firmware");
 		off = GetJsonValue(content, "mac_offset");
 		pre = GetJsonValue(content, "mac_prefix");
+		logf = GetJsonValue(content, "log_file");
 	}
 	if (off.empty()) off = "0x7DF100";
 	if (pre.empty()) pre = "78:44:FD";
@@ -214,12 +215,77 @@ static void WriteLastMac(const unsigned char* mac) {
 			<< "  \"firmware\": \"" << firmware << "\",\n"
 			<< "  \"mac_offset\": \"" << off << "\",\n"
 			<< "  \"mac_prefix\": \"" << pre << "\",\n"
-			<< "  \"last_mac\": \"" << macStr << "\"\n"
+			<< "  \"last_mac\": \"" << macStr << "\",\n"
+			<< "  \"log_file\": \"" << logf << "\"\n"
 			<< "}\n";
 		ofs.close();
 	}
 	else {
 		std::cerr << "Cannot write " << path << std::endl;
+	}
+}
+
+// 读取 5620GEN.json 中记录的日志文件路径；为空则返回默认 "error_log.txt"
+static std::string ReadLogPath() {
+	std::string path = GetCfgPath();
+	std::ifstream ifs(path);
+	if (!ifs.is_open()) return "error_log.txt";
+	std::string content((std::istreambuf_iterator<char>(ifs)),
+		std::istreambuf_iterator<char>());
+	ifs.close();
+	std::string lp = GetJsonValue(content, "log_file");
+	return lp.empty() ? std::string("error_log.txt") : lp;
+}
+
+// 追加一行烧录日志。格式：
+//   序号;MAC去冒号;序列号;TP-Link_xxxx;TP-Link_xxxx_5G
+// 其中 MAC 后4位取最后两字节组成，用于 wifi 名。
+static void AppendLog(const unsigned char* mac) {
+	std::string logPath = ReadLogPath();
+
+	// 序号 = 已有行数 + 1（第一次为 1）
+	int seq = 1;
+	{
+		std::ifstream lf(logPath);
+		if (lf.is_open()) {
+			std::string line;
+			while (std::getline(lf, line)) {
+				if (!line.empty()) ++seq;
+			}
+		}
+	}
+
+	// MAC 去冒号，共12位hex
+	char macHex[13];
+	sprintf_s(macHex, sizeof(macHex), "%02X%02X%02X%02X%02X%02X",
+		mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+	// wifi 名尾 4 位：取最后两字节
+	char last4[5];
+	sprintf_s(last4, sizeof(last4), "%02X%02X", mac[4], mac[5]);
+
+	// 序列号：前缀 117C792 + 6 位随机数
+	srand((unsigned)time(nullptr) ^ ((unsigned)mac[5] << 8));
+	int rnd = rand() % 1000000;
+	char serial[32];
+	sprintf_s(serial, sizeof(serial), "117C792%06d", rnd);
+
+	// wifi 名称
+	char wifi[48], wifi5g[48];
+	sprintf_s(wifi, sizeof(wifi), "TP-Link_%s", last4);
+	sprintf_s(wifi5g, sizeof(wifi5g), "TP-Link_%s_5G", last4);
+
+	std::ofstream ofs(logPath, std::ios::app);
+	if (ofs.is_open()) {
+		ofs << seq << ";"
+			<< macHex << ";"
+			<< serial << ";"
+			<< wifi << ";"
+			<< wifi5g << "\n";
+		ofs.close();
+	}
+	else {
+		std::cerr << "Cannot open log: " << logPath << std::endl;
 	}
 }
 
@@ -288,6 +354,9 @@ GETSERIAL_API pSTRUCOPERATOR GetSerial(unsigned char* pCode, unsigned char* pEEd
 
 	// 将本次 MAC 写回独立状态文件，供下次 +8 递增（保证不重复）
 	WriteLastMac(mac);
+
+	// 追加一条烧录日志：序号;MAC;序列号;wifi名;wifi5g名
+	AppendLog(mac);
 
 	// 向上位机上报本次修改的区域：CODE 区，从 macAddr 起长度 6 字节
 	OprateResult.nCount = 1;
