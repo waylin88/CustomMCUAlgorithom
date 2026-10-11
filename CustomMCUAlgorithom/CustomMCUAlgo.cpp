@@ -69,18 +69,52 @@ static bool HexStringToMac(const char* s, unsigned char* mac) {
 	return true;
 }
 
-// 获取 5620GEN.json 的完整路径（DLL 同目录）
+// 获取 5620GEN.json 的完整路径。
+// 由于上位机(如 Xgpro.exe 所在目录)与 DLL 所在目录可能不同，这里按优先级依次检索，
+// 命中第一个存在的文件：
+//   1) DLL 同目录  2) 上位机/进程 EXE 目录  3) 当前工作目录
 static std::string GetCfgPath() {
-	char dllDir[MAX_PATH];
+	std::string dllDir, exeDir;
+
+	// --- 候选1：DLL 同目录 ---
+	char dllBuf[MAX_PATH];
 	HMODULE hDll = nullptr;
-	GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+	if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
 		GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-		(LPCSTR)&GetCfgPath, &hDll);
-	GetModuleFileNameA(hDll, dllDir, (DWORD)sizeof(dllDir));
-	char* slash = strrchr(dllDir, '\\');
-	if (slash) *(slash + 1) = '\0';
-	else dllDir[0] = '\0';
-	return std::string(dllDir) + MAC_CFG_FILE;
+		(LPCSTR)&GetCfgPath, &hDll)) {
+		if (GetModuleFileNameA(hDll, dllBuf, (DWORD)sizeof(dllBuf)) > 0) {
+			std::string d = dllBuf;
+			size_t slash = d.find_last_of('\\');
+			if (slash != std::string::npos) { d[slash + 1] = '\0'; dllDir = d; }
+		}
+	}
+	if (!dllDir.empty()) {
+		std::string cfg = dllDir + MAC_CFG_FILE;
+		std::ifstream t(cfg.c_str());
+		if (t.good()) return cfg;
+	}
+
+	// --- 候选2：当前进程(上位机/Xgpro) EXE 目录 ---
+	char exeBuf[MAX_PATH];
+	if (GetModuleFileNameA(nullptr, exeBuf, (DWORD)sizeof(exeBuf)) > 0) {
+		std::string e = exeBuf;
+		size_t slash = e.find_last_of('\\');
+		if (slash != std::string::npos) { e[slash + 1] = '\0'; exeDir = e; }
+	}
+	if (!exeDir.empty()) {
+		std::string cfg = exeDir + MAC_CFG_FILE;
+		std::ifstream t(cfg.c_str());
+		if (t.good()) return cfg;
+	}
+
+	// --- 候选3：当前工作目录 ---
+	{
+		std::ifstream t(MAC_CFG_FILE);
+		if (t.good()) return std::string(MAC_CFG_FILE);
+	}
+
+	// 兜底：返回 DLL 同目录路径（写入时用，若都不存在则新建在 DLL 同目录）
+	return dllDir.empty() ? std::string(MAC_CFG_FILE) : dllDir + MAC_CFG_FILE;
 }
 
 // 从 JSON 文本中提取 "key": "value" 的值（value 两侧需带引号）
