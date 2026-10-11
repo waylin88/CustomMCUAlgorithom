@@ -1,0 +1,5 @@
+EXPORTS
+
+    GetSerial
+	GetCurrentIcInfo
+	EndProgAccess

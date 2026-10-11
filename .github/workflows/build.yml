@@ -1,0 +1,65 @@
+# GitHub Actions 自动编译工作流
+# 在 Windows 云端环境编译 CustomMCUAlgorithom DLL，并上传产物。
+#
+# 触发方式：
+#   1. 推送到任意分支（push）
+#   2. 在 GitHub Actions 页面手动运行（workflow_dispatch）
+
+name: Build DLL
+
+on:
+  push:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 用 vcpkg 安装 rapidjson（纯头文件依赖，ConfigReader.cpp 使用）
+      - name: Install rapidjson via vcpkg
+        run: |
+          vcpkg install rapidjson:x86-windows
+          vcpkg install rapidjson:x64-windows
+
+      # 配置 MSBuild 环境（windows-2022 预装 VS2022 Enterprise）
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # 解析 vcpkg include 目录到环境变量
+      - name: Resolve vcpkg include path
+        shell: bash
+        run: |
+          echo "VCPKG_INCLUDE=$VCPKG_INSTALLATION_ROOT/installed/x86-windows/include" >> "$GITHUB_ENV"
+
+      # 编译 Release-x86 (Win32)，覆盖硬编码的本机库路径，改用 vcpkg include
+      - name: Build (Release x86)
+        shell: bash
+        run: |
+          msbuild CustomMCUAlgorithom.sln /t:Build /m /p:Configuration=Release /p:Platform=x86 /p:ExternalIncludePath="$VCPKG_INCLUDE"
+
+      # 收集产物
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          if [ -f "CustomMCUAlgorithom/Release/CustomMCUAlgorithom.dll" ]; then
+            cp -f "CustomMCUAlgorithom/Release/CustomMCUAlgorithom.dll" artifacts/
+          elif [ -f "Release/CustomMCUAlgorithom.dll" ]; then
+            cp -f "Release/CustomMCUAlgorithom.dll" artifacts/
+          fi
+          [ -f config.json ] && cp -f config.json artifacts/
+          [ -f test.txt ] && cp -f test.txt artifacts/
+          ls -la artifacts/
+
+      # 上传产物到运行结果页，供下载
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CustomMCUAlgorithom-Release
+          path: artifacts/
+          if-no-files-found: warn

@@ -1,0 +1,22 @@
+# ---- Visual Studio 构建产物 ----
+Debug/
+Release/
+x64/
+*.obj
+*.pdb
+*.ilk
+*.log
+*.tlog
+*.idb
+*.iobj
+*.ipdb
+*.dll.recipe
+.vs/
+*.user
+*.aps
+
+# ---- 云 migrate 编译的输出 ----
+artifacts/
+
+# ---- 运行时生成的文件 ----
+error_log.txt
