@@ -26,21 +26,20 @@ jobs:
           vcpkg install rapidjson:x86-windows
           vcpkg install rapidjson:x64-windows
 
-      # 配置 MSBuild 环境（windows-2022 预装 VS2022 Enterprise）
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
       # 解析 vcpkg include 目录到环境变量
       - name: Resolve vcpkg include path
         shell: bash
         run: |
           echo "VCPKG_INCLUDE=$VCPKG_INSTALLATION_ROOT/installed/x86-windows/include" >> "$GITHUB_ENV"
 
-      # 编译 Release-x86 (Win32)，覆盖硬编码的本机库路径，改用 vcpkg include
+      # 编译 Release-x86 (Win32)，覆盖硬编码的本机库路径，改用 vcpkg include。
+      # 直接使用 windows-2022 预装 VS2022 Enterprise 的 MSBuild 完整路径，
+      # 通过 VsDevCmd.bat 初始化编译环境（包含 cl.exe / include / lib）。
       - name: Build (Release x86)
-        shell: bash
+        shell: cmd
         run: |
-          msbuild CustomMCUAlgorithom.sln /t:Build /m /p:Configuration=Release /p:Platform=x86 /p:ExternalIncludePath="$VCPKG_INCLUDE"
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x86
+          msbuild CustomMCUAlgorithom.sln /t:Build /m /p:Configuration=Release /p:Platform=x86 /p:ExternalIncludePath="%VCPKG_INCLUDE%"
 
       # 收集产物
       - name: Collect artifacts
